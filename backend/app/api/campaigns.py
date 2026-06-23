@@ -1,5 +1,6 @@
 """Campaign endpoints for CausalIQ — training, evaluation, and prediction."""
 
+import os
 import uuid
 from datetime import datetime
 from typing import List
@@ -51,9 +52,10 @@ def create_campaign(body: CampaignCreate) -> CampaignResponse:
     }
 
     try:
-        X, treatment, y, feature_names = load_criteo_data(
-            '../data/processed/criteo_sample.csv', seed=42
-        )
+        criteo_path = '../data/processed/criteo_sample.csv'
+        if not os.path.exists(criteo_path):
+            criteo_path = '../data/processed/criteo_deploy_sample.csv'
+        X, treatment, y, feature_names = load_criteo_data(criteo_path)
 
         indices = np.arange(len(X))
         train_idx, test_idx = train_test_split(indices, test_size=0.3, random_state=42)
