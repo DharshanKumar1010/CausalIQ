@@ -82,6 +82,8 @@ The Doubly Robust Learner combines outcome modeling with propensity weighting â€
 ============================================================
 ```
 
+> **Note on deployed demo**: The live demo at https://causal-iq.vercel.app uses a 10k sample for fast loading on free hosting. Full results above are from the 500k balanced Criteo sample trained locally. To reproduce full results, clone the repo and run with data/processed/criteo_sample.csv.
+
 ---
 
 ## Tech Stack
