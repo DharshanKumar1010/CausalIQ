@@ -272,3 +272,243 @@ def compare_models_on_criteo(
         't_model': t_model,
         's_model': s_model,
     }
+
+
+class XLearnerModel:
+    """X-Learner (Cross-Model) uplift estimator.
+
+    Fits outcome models on each group, computes residual pseudo-outcomes
+    (cross-group imputations), then trains effect models on those residuals.
+    Better than T-Learner when treatment/control group sizes are imbalanced.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the X-Learner with four independent XGBoost models."""
+        self.control_outcome_model = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.treatment_outcome_model = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.control_effect_model = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.treatment_effect_model = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.is_fitted = False
+
+    def fit(self, X: np.ndarray, treatment: np.ndarray, y: np.ndarray) -> None:
+        """Fit outcome models then cross-impute pseudo-treatment effects.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+            treatment: Binary treatment indicator array of shape (n_samples,).
+            y: Binary outcome array of shape (n_samples,).
+        """
+        mask_c = treatment == 0
+        mask_t = treatment == 1
+
+        self.control_outcome_model.fit(X[mask_c], y[mask_c])
+        self.treatment_outcome_model.fit(X[mask_t], y[mask_t])
+
+        tau_t = y[mask_t] - self.control_outcome_model.predict(X[mask_t])
+        tau_c = self.treatment_outcome_model.predict(X[mask_c]) - y[mask_c]
+
+        self.treatment_effect_model.fit(X[mask_t], tau_t)
+        self.control_effect_model.fit(X[mask_c], tau_c)
+
+        self.is_fitted = True
+        print(f"✓ X-Learner fitted | Control: {mask_c.sum()} | Treatment: {mask_t.sum()}")
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Predict uplift as a propensity-weighted blend of the two effect models.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            Uplift estimates of shape (n_samples,).
+        """
+        g = 0.5
+        tau_t = self.treatment_effect_model.predict(X)
+        tau_c = self.control_effect_model.predict(X)
+        return g * tau_c + (1 - g) * tau_t
+
+    def get_feature_importance(self) -> dict[str, list[float]]:
+        """Return feature importances from both effect models.
+
+        Returns:
+            Dict with 'control_effect' and 'treatment_effect' keys.
+        """
+        return {
+            'control_effect': self.control_effect_model.feature_importances_.tolist(),
+            'treatment_effect': self.treatment_effect_model.feature_importances_.tolist(),
+        }
+
+
+class DRLearnerModel:
+    """DR-Learner (Doubly-Robust) uplift estimator.
+
+    Constructs doubly-robust pseudo-outcomes using separate outcome models and
+    a fixed propensity score, then regresses those pseudo-outcomes on features.
+    Consistent if either the outcome model or propensity model is correctly specified.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the DR-Learner with outcome models and a fixed propensity."""
+        self.outcome_model_c = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.outcome_model_t = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.effect_model = XGBRegressor(random_state=42, n_estimators=100, verbosity=0)
+        self.propensity = 0.5
+        self.is_fitted = False
+
+    def fit(self, X: np.ndarray, treatment: np.ndarray, y: np.ndarray) -> None:
+        """Build DR pseudo-outcomes and fit the final effect model.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+            treatment: Binary treatment indicator array of shape (n_samples,).
+            y: Binary outcome array of shape (n_samples,).
+        """
+        mask_c = treatment == 0
+        mask_t = treatment == 1
+
+        self.outcome_model_c.fit(X[mask_c], y[mask_c])
+        self.outcome_model_t.fit(X[mask_t], y[mask_t])
+
+        mu0 = self.outcome_model_c.predict(X)
+        mu1 = self.outcome_model_t.predict(X)
+        p = self.propensity
+
+        dr_outcome = (
+            mu1 - mu0
+            + (treatment * (y - mu1)) / p
+            - ((1 - treatment) * (y - mu0)) / (1 - p)
+        )
+
+        self.effect_model.fit(X, dr_outcome)
+        self.is_fitted = True
+        print(f"✓ DR-Learner fitted on {len(X)} samples")
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Predict uplift using the fitted effect model.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            Uplift estimates of shape (n_samples,).
+        """
+        return self.effect_model.predict(X)
+
+    def get_feature_importance(self) -> list[float]:
+        """Return feature importances from the effect model.
+
+        Returns:
+            List of feature importances.
+        """
+        return self.effect_model.feature_importances_.tolist()
+
+
+class UpliftEnsemble:
+    """Ensemble of all four meta-learner uplift models.
+
+    Holds T-, S-, X-, and DR-Learner instances and provides joint
+    training, per-model prediction, and simple mean-ensemble prediction.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the ensemble with one instance of each meta-learner."""
+        self.models: dict[str, TLearnerModel | SLearnerModel | XLearnerModel | DRLearnerModel] = {
+            't_learner': TLearnerModel(),
+            's_learner': SLearnerModel(),
+            'x_learner': XLearnerModel(),
+            'dr_learner': DRLearnerModel(),
+        }
+        self.is_fitted = False
+
+    def fit_all(self, X: np.ndarray, treatment: np.ndarray, y: np.ndarray) -> None:
+        """Fit every model in the ensemble sequentially.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+            treatment: Binary treatment indicator array of shape (n_samples,).
+            y: Binary outcome array of shape (n_samples,).
+        """
+        for name, model in self.models.items():
+            print(f"Training {name}...")
+            model.fit(X, treatment, y)
+        self.is_fitted = True
+        print("✓ All 4 models fitted")
+
+    def predict_all(self, X: np.ndarray) -> dict[str, np.ndarray]:
+        """Return per-model uplift predictions.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            Dict mapping model name to uplift array of shape (n_samples,).
+        """
+        return {name: model.predict(X) for name, model in self.models.items()}
+
+    def ensemble_predict(self, X: np.ndarray) -> np.ndarray:
+        """Return the element-wise mean uplift across all four models.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            Ensemble uplift estimates of shape (n_samples,).
+        """
+        all_preds = self.predict_all(X)
+        return np.mean(list(all_preds.values()), axis=0)
+
+
+def compare_all_models_on_criteo(
+    filepath: str = 'data/processed/criteo_sample.csv',
+    train_split: float = 0.7,
+    seed: int = 42,
+) -> dict:
+    """Train all four meta-learners and the ensemble on the Criteo dataset.
+
+    Args:
+        filepath: Path to the processed Criteo CSV file.
+        train_split: Fraction of data used for training (remainder is test).
+        seed: Random seed for data loading and train/test split.
+
+    Returns:
+        Dict with per-model predictions, ensemble predictions, test arrays,
+        and the fitted UpliftEnsemble instance.
+    """
+    X, treatment, y, feature_names = load_criteo_data(filepath, seed=seed)
+
+    indices = np.arange(len(X))
+    train_idx, test_idx = train_test_split(
+        indices, test_size=1 - train_split, random_state=seed
+    )
+    X_train, X_test = X[train_idx], X[test_idx]
+    treatment_train, treatment_test = treatment[train_idx], treatment[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    ensemble = UpliftEnsemble()
+    ensemble.fit_all(X_train, treatment_train, y_train)
+
+    predictions = ensemble.predict_all(X_test)
+    ensemble_preds = ensemble.ensemble_predict(X_test)
+
+    print("=" * 60)
+    print("  CAUSALIQ Week 2: All 4 Meta-Learners on Criteo")
+    print("=" * 60)
+    print(f"Train: {len(X_train):,} | Test: {len(X_test):,}")
+    for name, preds in predictions.items():
+        print(f"\n{name.upper()}:")
+        print(f"  Mean uplift: {preds.mean():.6f}")
+        print(f"  Std: {preds.std():.6f}")
+        print(f"  Range: [{preds.min():.6f}, {preds.max():.6f}]")
+    print(f"\nENSEMBLE (mean of 4 models):")
+    print(f"  Mean uplift: {ensemble_preds.mean():.6f}")
+    print(f"  Std: {ensemble_preds.std():.6f}")
+    print("=" * 60)
+
+    return {
+        'predictions': predictions,
+        'ensemble_predictions': ensemble_preds,
+        'X_test': X_test,
+        'treatment_test': treatment_test,
+        'y_test': y_test,
+        'ensemble': ensemble,
+    }
