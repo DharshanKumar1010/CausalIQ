@@ -52,7 +52,7 @@ def create_campaign(body: CampaignCreate) -> CampaignResponse:
 
     try:
         X, treatment, y, feature_names = load_criteo_data(
-            'data/processed/criteo_sample.csv', seed=42
+            '../data/processed/criteo_sample.csv', seed=42
         )
 
         indices = np.arange(len(X))
