@@ -39,15 +39,15 @@ export interface Persuadable {
 }
 
 export const campaignAPI = {
-  list: () => api.get<Campaign[]>('/campaigns'),
+  list: () => api.get<Campaign[]>('/api/campaigns'),
   create: (data: {
     name: string
     description: string
     treatment_type: string
     sample_size: number
-  }) => api.post<Campaign>('/campaigns', data),
-  get: (id: string) => api.get<Campaign>(`/campaigns/${id}`),
-  getResults: (id: string) => api.get<CampaignResults>(`/campaigns/${id}/results`),
+  }) => api.post<Campaign>('/api/campaigns', data),
+  get: (id: string) => api.get<Campaign>(`/api/campaigns/${id}`),
+  getResults: (id: string) => api.get<CampaignResults>(`/api/campaigns/${id}/results`),
   getPersuadables: (id: string, limit = 20) =>
-    api.get<Persuadable[]>(`/campaigns/${id}/persuadables?limit=${limit}`),
+    api.get<Persuadable[]>(`/api/campaigns/${id}/persuadables?limit=${limit}`),
 }
