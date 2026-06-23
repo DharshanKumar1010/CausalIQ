@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+const BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'https://causaliq-backend.onrender.com'
+
 const api = axios.create({
-  baseURL: (import.meta as any).env?.VITE_API_BASE_URL || '/api',
+  baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
 

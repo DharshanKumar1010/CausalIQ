@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, BarChart3, Database, Layers } from 'lucide-react'
+import { Loader2, BarChart3, Database, Layers, LogOut } from 'lucide-react'
 import { campaignAPI, Campaign } from '../services/api'
 
 const TREATMENT_TYPES = ['ad', 'email', 'discount'] as const
@@ -21,9 +21,13 @@ function StatusBadge({ status }: { status: string }) {
 export default function Dashboard() {
   const navigate = useNavigate()
 
+  function handleLogout() {
+    localStorage.removeItem('causaliq-auth')
+    navigate('/login')
+  }
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loadingList, setLoadingList] = useState(true)
-  const [listError, setListError] = useState<string | null>(null)
 
   const [form, setForm] = useState({
     name: '',
@@ -38,7 +42,7 @@ export default function Dashboard() {
     campaignAPI
       .list()
       .then(res => setCampaigns(res.data))
-      .catch(() => setListError('Failed to load campaigns'))
+      .catch(() => setCampaigns([]))
       .finally(() => setLoadingList(false))
   }, [])
 
@@ -72,7 +76,13 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-white">CausalIQ</h1>
             <p className="text-sm text-slate-400 mt-0.5">Causal Inference &amp; Uplift Modeling Platform</p>
           </div>
-          <span className="text-xs text-slate-500 bg-slate-700 px-3 py-1 rounded-full">Week 5</span>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-red-400 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Logout
+          </button>
         </div>
       </header>
 
@@ -174,8 +184,6 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 text-slate-400">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading campaigns...
             </div>
-          ) : listError ? (
-            <p className="text-red-400">{listError}</p>
           ) : campaigns.length === 0 ? (
             <p className="text-slate-500 text-sm">No campaigns yet. Train your first model above.</p>
           ) : (
